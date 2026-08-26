@@ -1,10 +1,17 @@
 import { Redis } from "@upstash/redis";
 import { v4 as uuidv4 } from "uuid";
 
-const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL || "",
-  token: process.env.UPSTASH_REDIS_REST_TOKEN || "",
-});
+let redis: Redis;
+
+function getRedis() {
+  if (!redis) {
+    redis = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL!,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+    });
+  }
+  return redis;
+}
 
 export interface User {
   id: string;
@@ -46,22 +53,26 @@ export interface Subdomain {
 
 // Users
 export async function findUserByEmail(email: string): Promise<User | null> {
-  const userId = await redis.get<string>(`user:email:${email}`);
+  const r = getRedis();
+  const userId = await r.get<string>(`user:email:${email}`);
   if (!userId) return null;
-  return redis.get<User>(`user:${userId}`);
+  return r.get<User>(`user:${userId}`);
 }
 
 export async function findUserByUsername(username: string): Promise<User | null> {
-  const userId = await redis.get<string>(`user:username:${username}`);
+  const r = getRedis();
+  const userId = await r.get<string>(`user:username:${username}`);
   if (!userId) return null;
-  return redis.get<User>(`user:${userId}`);
+  return r.get<User>(`user:${userId}`);
 }
 
 export async function findUserById(id: string): Promise<User | null> {
-  return redis.get<User>(`user:${id}`);
+  const r = getRedis();
+  return r.get<User>(`user:${id}`);
 }
 
 export async function createUser(data: Omit<User, "id" | "createdAt" | "updatedAt">): Promise<User> {
+  const r = getRedis();
   const user: User = {
     ...data,
     id: uuidv4(),
@@ -69,44 +80,47 @@ export async function createUser(data: Omit<User, "id" | "createdAt" | "updatedA
     updatedAt: new Date().toISOString(),
   };
 
-  const pipeline = redis.pipeline();
-  pipeline.set(`user:${user.id}`, user);
-  pipeline.set(`user:email:${user.email}`, user.id);
-  pipeline.set(`user:username:${user.username}`, user.id);
-  await pipeline.exec();
+  await r.set(`user:${user.id}`, JSON.stringify(user));
+  await r.set(`user:email:${user.email}`, user.id);
+  await r.set(`user:username:${user.username}`, user.id);
 
   return user;
 }
 
 export async function updateUser(id: string, data: Partial<User>): Promise<User | null> {
-  const user = await redis.get<User>(`user:${id}`);
+  const r = getRedis();
+  const user = await r.get<User>(`user:${id}`);
   if (!user) return null;
 
   const updated = { ...user, ...data, updatedAt: new Date().toISOString() };
-  await redis.set(`user:${id}`, updated);
+  await r.set(`user:${id}`, JSON.stringify(updated));
   return updated;
 }
 
 // Projects
 export async function getProjectsByUser(userId: string): Promise<Project[]> {
-  const projectIds = await redis.smembers<string[]>(`user:${userId}:projects`);
+  const r = getRedis();
+  const projectIds = await r.smembers(`user:${userId}:projects`) as string[];
   if (!projectIds || projectIds.length === 0) return [];
 
-  const pipeline = redis.pipeline();
+  const projects: Project[] = [];
   for (const id of projectIds) {
-    pipeline.get(`project:${id}`);
+    const project = await r.get<Project>(`project:${id}`);
+    if (project) projects.push(project);
   }
-  const results = await pipeline.exec<(Project | null)[]>();
-  return (results.filter(Boolean) as Project[]).sort(
+
+  return projects.sort(
     (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
   );
 }
 
 export async function findProjectById(id: string): Promise<Project | null> {
-  return redis.get<Project>(`project:${id}`);
+  const r = getRedis();
+  return r.get<Project>(`project:${id}`);
 }
 
 export async function createProject(data: { name: string; description?: string; userId: string }): Promise<Project> {
+  const r = getRedis();
   const project: Project = {
     id: uuidv4(),
     name: data.name,
@@ -118,59 +132,62 @@ export async function createProject(data: { name: string; description?: string; 
     userId: data.userId,
   };
 
-  const pipeline = redis.pipeline();
-  pipeline.set(`project:${project.id}`, project);
-  pipeline.sadd(`user:${data.userId}:projects`, project.id);
-  await pipeline.exec();
+  await r.set(`project:${project.id}`, JSON.stringify(project));
+  await r.sadd(`user:${data.userId}:projects`, project.id);
 
   return project;
 }
 
 export async function updateProject(id: string, data: Partial<Project>): Promise<Project | null> {
-  const project = await redis.get<Project>(`project:${id}`);
+  const r = getRedis();
+  const project = await r.get<Project>(`project:${id}`);
   if (!project) return null;
 
   const updated = { ...project, ...data, updatedAt: new Date().toISOString() };
-  await redis.set(`project:${id}`, updated);
+  await r.set(`project:${id}`, JSON.stringify(updated));
   return updated;
 }
 
 export async function deleteProject(id: string): Promise<boolean> {
-  const project = await redis.get<Project>(`project:${id}`);
+  const r = getRedis();
+  const project = await r.get<Project>(`project:${id}`);
   if (!project) return false;
 
-  const pipeline = redis.pipeline();
-  pipeline.del(`project:${id}`);
-  pipeline.srem(`user:${project.userId}:projects`, id);
-  // Remove subdomain if exists
+  await r.del(`project:${id}`);
+  await r.srem(`user:${project.userId}:projects`, id);
+
   const subdomain = await findSubdomainByProject(id);
   if (subdomain) {
-    pipeline.del(`subdomain:${subdomain.slug}`);
-    pipeline.del(`subdomain:project:${id}`);
-    pipeline.del(`subdomain:user:${subdomain.userId}`);
+    await r.del(`subdomain:${subdomain.slug}`);
+    await r.del(`subdomain:project:${id}`);
+    await r.del(`subdomain:user:${subdomain.userId}`);
   }
-  await pipeline.exec();
+
   return true;
 }
 
 // Subdomains
 export async function findSubdomainBySlug(slug: string): Promise<Subdomain | null> {
-  return redis.get<Subdomain>(`subdomain:${slug}`);
+  const r = getRedis();
+  return r.get<Subdomain>(`subdomain:${slug}`);
 }
 
 export async function findSubdomainByProject(projectId: string): Promise<Subdomain | null> {
-  const subdomainId = await redis.get<string>(`subdomain:project:${projectId}`);
+  const r = getRedis();
+  const subdomainId = await r.get<string>(`subdomain:project:${projectId}`);
   if (!subdomainId) return null;
-  return redis.get<Subdomain>(`subdomain:${subdomainId}`);
+  return r.get<Subdomain>(`subdomain:${subdomainId}`);
 }
 
 export async function findSubdomainByUser(userId: string): Promise<Subdomain | null> {
-  const subdomainId = await redis.get<string>(`subdomain:user:${userId}`);
+  const r = getRedis();
+  const subdomainId = await r.get<string>(`subdomain:user:${userId}`);
   if (!subdomainId) return null;
-  return redis.get<Subdomain>(`subdomain:${subdomainId}`);
+  return r.get<Subdomain>(`subdomain:${subdomainId}`);
 }
 
 export async function createSubdomain(data: { slug: string; projectId: string; userId: string }): Promise<Subdomain> {
+  const r = getRedis();
   const subdomain: Subdomain = {
     id: uuidv4(),
     slug: data.slug,
@@ -178,11 +195,9 @@ export async function createSubdomain(data: { slug: string; projectId: string; u
     userId: data.userId,
   };
 
-  const pipeline = redis.pipeline();
-  pipeline.set(`subdomain:${subdomain.slug}`, subdomain);
-  pipeline.set(`subdomain:project:${data.projectId}`, subdomain.id);
-  pipeline.set(`subdomain:user:${data.userId}`, subdomain.id);
-  await pipeline.exec();
+  await r.set(`subdomain:${subdomain.slug}`, JSON.stringify(subdomain));
+  await r.set(`subdomain:project:${data.projectId}`, subdomain.id);
+  await r.set(`subdomain:user:${data.userId}`, subdomain.id);
 
   return subdomain;
 }
