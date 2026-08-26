@@ -21,17 +21,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Slug can only contain lowercase letters, numbers, and hyphens" }, { status: 400 });
     }
 
-    const existing = findSubdomainBySlug(slug);
+    const existing = await findSubdomainBySlug(slug);
     if (existing) {
       return NextResponse.json({ error: "Subdomain already taken" }, { status: 409 });
     }
 
-    const userSubdomain = findSubdomainByUser(userId);
+    const userSubdomain = await findSubdomainByUser(userId);
     if (userSubdomain) {
       return NextResponse.json({ error: "You already have a subdomain. Each user can only have one." }, { status: 409 });
     }
 
-    const subdomain = createSubdomain({ slug, projectId, userId });
+    const subdomain = await createSubdomain({ slug, projectId, userId });
     return NextResponse.json({ subdomain }, { status: 201 });
   } catch (error) {
     return NextResponse.json({ error: "Failed to create subdomain" }, { status: 500 });

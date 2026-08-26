@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { findProjectById, findSubdomainBySlug, createSubdomain } from "@/lib/db";
-import { v4 as uuidv4 } from "uuid";
+import { findProjectById, findSubdomainBySlug, findSubdomainByUser, createSubdomain } from "@/lib/db";
 
 export async function POST(req: NextRequest) {
   try {
@@ -19,18 +18,18 @@ export async function POST(req: NextRequest) {
     }
 
     // Verify project ownership
-    const project = findProjectById(projectId);
+    const project = await findProjectById(projectId);
     if (!project || project.userId !== userId) {
       return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
 
     // Check if slug is available
-    const existing = findSubdomainBySlug(slug);
+    const existing = await findSubdomainBySlug(slug);
     if (existing) {
       return NextResponse.json({ error: "Subdomain already taken" }, { status: 409 });
     }
 
-    const subdomain = createSubdomain({ slug, projectId, userId });
+    const subdomain = await createSubdomain({ slug, projectId, userId });
 
     return NextResponse.json({ subdomain }, { status: 201 });
   } catch (error) {

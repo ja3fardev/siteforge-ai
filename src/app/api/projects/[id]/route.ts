@@ -10,7 +10,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const project = findProjectById(params.id);
+    const project = await findProjectById(params.id);
     if (!project || project.userId !== (session.user as any).id) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
@@ -28,13 +28,13 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const project = findProjectById(params.id);
+    const project = await findProjectById(params.id);
     if (!project || project.userId !== (session.user as any).id) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
     const data = await req.json();
-    const updated = updateProject(params.id, data);
+    const updated = await updateProject(params.id, data);
     return NextResponse.json({ project: updated });
   } catch (error) {
     return NextResponse.json({ error: "Failed to update project" }, { status: 500 });
@@ -48,12 +48,12 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const project = findProjectById(params.id);
+    const project = await findProjectById(params.id);
     if (!project || project.userId !== (session.user as any).id) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    deleteProject(params.id);
+    await deleteProject(params.id);
     return NextResponse.json({ message: "Deleted" });
   } catch (error) {
     return NextResponse.json({ error: "Failed to delete project" }, { status: 500 });

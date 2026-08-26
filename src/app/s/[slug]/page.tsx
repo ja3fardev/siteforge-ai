@@ -8,6 +8,7 @@ export default function SubdomainPage() {
   const slug = params.slug as string;
   const [html, setHtml] = useState<string>("");
   const [error, setError] = useState<string>("");
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetch(`/api/subdomain/${slug}`)
@@ -15,6 +16,7 @@ export default function SubdomainPage() {
       .then((d) => {
         if (d.error || !d.project) {
           setError("This site could not be found or is not published.");
+          setLoading(false);
           return;
         }
         const project = d.project;
@@ -31,8 +33,12 @@ export default function SubdomainPage() {
           parts.push("</body></html>");
           setHtml(parts.join("\n"));
         }
+        setLoading(false);
       })
-      .catch(() => setError("This site could not be found or is not published."));
+      .catch(() => {
+        setError("This site could not be found or is not published.");
+        setLoading(false);
+      });
   }, [slug]);
 
   if (error) {
@@ -46,7 +52,7 @@ export default function SubdomainPage() {
     );
   }
 
-  if (!html) {
+  if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />

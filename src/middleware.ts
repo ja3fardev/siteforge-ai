@@ -5,14 +5,29 @@ export function middleware(request: NextRequest) {
   const host = request.headers.get("host") || "";
   const url = request.nextUrl;
 
-  // Check for subdomain (e.g., mysite.siteforge.dev)
-  const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN || "siteforge.dev";
-  const subdomain = host.replace(`.${rootDomain}`, "").replace(rootDomain, "");
+  // Skip subdomain detection for localhost, 127.0.0.1, and Vercel preview URLs
+  if (
+    host.includes("localhost") ||
+    host.includes("127.0.0.1") ||
+    host.includes("vercel.app") ||
+    host.includes("netlify.app")
+  ) {
+    return NextResponse.next();
+  }
 
-  if (subdomain && subdomain !== "www" && subdomain !== "app" && subdomain !== "api") {
-    // Rewrite to the subdomain page
-    url.pathname = `/s/${subdomain}${url.pathname}`;
-    return NextResponse.rewrite(url);
+  const rootDomain = process.env.NEXT_PUBLIC_ROOT_DOMAIN || "siteforge.dev";
+
+  // Remove port if present
+  const hostname = host.split(":")[0];
+
+  // Check for subdomain (e.g., mysite.siteforge.dev)
+  if (hostname.endsWith(`.${rootDomain}`)) {
+    const subdomain = hostname.replace(`.${rootDomain}`, "");
+
+    if (subdomain && subdomain !== "www" && subdomain !== "app" && subdomain !== "api") {
+      url.pathname = `/s/${subdomain}${url.pathname}`;
+      return NextResponse.rewrite(url);
+    }
   }
 
   return NextResponse.next();

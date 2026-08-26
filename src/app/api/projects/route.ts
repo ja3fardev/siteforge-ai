@@ -11,7 +11,7 @@ export async function GET() {
     }
 
     const userId = (session.user as any).id;
-    const projects = getProjectsByUser(userId);
+    const projects = await getProjectsByUser(userId);
     return NextResponse.json({ projects });
   } catch (error) {
     return NextResponse.json({ error: "Failed to fetch projects" }, { status: 500 });
@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Project name is required" }, { status: 400 });
     }
 
-    const project = createProject({ name, description, userId });
+    const project = await createProject({ name, description, userId });
     return NextResponse.json({ project }, { status: 201 });
   } catch (error) {
     return NextResponse.json({ error: "Failed to create project" }, { status: 500 });

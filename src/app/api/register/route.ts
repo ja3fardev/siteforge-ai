@@ -18,18 +18,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Username can only contain letters, numbers, and underscores" }, { status: 400 });
     }
 
-    const existingEmail = findUserByEmail(email);
+    const existingEmail = await findUserByEmail(email);
     if (existingEmail) {
       return NextResponse.json({ error: "Email already registered" }, { status: 409 });
     }
 
-    const existingUsername = findUserByUsername(username);
+    const existingUsername = await findUserByUsername(username);
     if (existingUsername) {
       return NextResponse.json({ error: "Username already taken" }, { status: 409 });
     }
 
     const hashedPassword = await bcrypt.hash(password, 12);
-    const user = createUser({ name, email, username, password: hashedPassword });
+    const user = await createUser({ name, email, username, password: hashedPassword });
 
     return NextResponse.json({ message: "Account created", userId: user.id }, { status: 201 });
   } catch (error) {

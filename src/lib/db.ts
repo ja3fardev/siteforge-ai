@@ -1,11 +1,12 @@
-import fs from "fs";
-import path from "path";
+import { Redis } from "@upstash/redis";
 import { v4 as uuidv4 } from "uuid";
 
-const DB_DIR = path.join(process.cwd(), "data");
-const DB_FILE = path.join(DB_DIR, "db.json");
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL || "",
+  token: process.env.UPSTASH_REDIS_REST_TOKEN || "",
+});
 
-interface User {
+export interface User {
   id: string;
   name: string;
   email: string;
@@ -17,7 +18,7 @@ interface User {
   updatedAt: string;
 }
 
-interface Project {
+export interface Project {
   id: string;
   name: string;
   description?: string;
@@ -29,98 +30,83 @@ interface Project {
   userId: string;
 }
 
-interface FileEntry {
+export interface FileEntry {
   name: string;
   path: string;
   content: string;
   language: string;
 }
 
-interface Subdomain {
+export interface Subdomain {
   id: string;
   slug: string;
   projectId: string;
   userId: string;
 }
 
-interface DB {
-  users: User[];
-  projects: Project[];
-  subdomains: Subdomain[];
-}
-
-function ensureDbDir() {
-  if (!fs.existsSync(DB_DIR)) {
-    fs.mkdirSync(DB_DIR, { recursive: true });
-  }
-  if (!fs.existsSync(DB_FILE)) {
-    const emptyDb: DB = { users: [], projects: [], subdomains: [] };
-    fs.writeFileSync(DB_FILE, JSON.stringify(emptyDb, null, 2));
-  }
-}
-
-function readDb(): DB {
-  ensureDbDir();
-  const data = fs.readFileSync(DB_FILE, "utf-8");
-  return JSON.parse(data);
-}
-
-function writeDb(db: DB) {
-  ensureDbDir();
-  fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
-}
-
 // Users
-export function findUserByEmail(email: string): User | undefined {
-  const db = readDb();
-  return db.users.find((u) => u.email === email);
+export async function findUserByEmail(email: string): Promise<User | null> {
+  const userId = await redis.get<string>(`user:email:${email}`);
+  if (!userId) return null;
+  return redis.get<User>(`user:${userId}`);
 }
 
-export function findUserByUsername(username: string): User | undefined {
-  const db = readDb();
-  return db.users.find((u) => u.username === username);
+export async function findUserByUsername(username: string): Promise<User | null> {
+  const userId = await redis.get<string>(`user:username:${username}`);
+  if (!userId) return null;
+  return redis.get<User>(`user:${userId}`);
 }
 
-export function findUserById(id: string): User | undefined {
-  const db = readDb();
-  return db.users.find((u) => u.id === id);
+export async function findUserById(id: string): Promise<User | null> {
+  return redis.get<User>(`user:${id}`);
 }
 
-export function createUser(data: Omit<User, "id" | "createdAt" | "updatedAt">): User {
-  const db = readDb();
+export async function createUser(data: Omit<User, "id" | "createdAt" | "updatedAt">): Promise<User> {
   const user: User = {
     ...data,
     id: uuidv4(),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
-  db.users.push(user);
-  writeDb(db);
+
+  const pipeline = redis.pipeline();
+  pipeline.set(`user:${user.id}`, user);
+  pipeline.set(`user:email:${user.email}`, user.id);
+  pipeline.set(`user:username:${user.username}`, user.id);
+  await pipeline.exec();
+
   return user;
 }
 
-export function updateUser(id: string, data: Partial<User>): User | null {
-  const db = readDb();
-  const idx = db.users.findIndex((u) => u.id === id);
-  if (idx === -1) return null;
-  db.users[idx] = { ...db.users[idx], ...data, updatedAt: new Date().toISOString() };
-  writeDb(db);
-  return db.users[idx];
+export async function updateUser(id: string, data: Partial<User>): Promise<User | null> {
+  const user = await redis.get<User>(`user:${id}`);
+  if (!user) return null;
+
+  const updated = { ...user, ...data, updatedAt: new Date().toISOString() };
+  await redis.set(`user:${id}`, updated);
+  return updated;
 }
 
 // Projects
-export function getProjectsByUser(userId: string): Project[] {
-  const db = readDb();
-  return db.projects.filter((p) => p.userId === userId).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+export async function getProjectsByUser(userId: string): Promise<Project[]> {
+  const projectIds = await redis.smembers<string[]>(`user:${userId}:projects`);
+  if (!projectIds || projectIds.length === 0) return [];
+
+  const pipeline = redis.pipeline();
+  for (const id of projectIds) {
+    pipeline.get(`project:${id}`);
+  }
+  const results = await pipeline.exec<(Project | null)[]>();
+  return (results.filter(Boolean) as Project[]).sort(
+    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+  );
 }
 
-export function findProjectById(id: string): Project | undefined {
-  const db = readDb();
-  return db.projects.find((p) => p.id === id);
+export async function findProjectById(id: string): Promise<Project | null> {
+  return redis.get<Project>(`project:${id}`);
 }
 
-export function createProject(data: { name: string; description?: string; userId: string }): Project {
-  const db = readDb();
+export async function createProject(data: { name: string; description?: string; userId: string }): Promise<Project> {
   const project: Project = {
     id: uuidv4(),
     name: data.name,
@@ -131,50 +117,72 @@ export function createProject(data: { name: string; description?: string; userId
     updatedAt: new Date().toISOString(),
     userId: data.userId,
   };
-  db.projects.push(project);
-  writeDb(db);
+
+  const pipeline = redis.pipeline();
+  pipeline.set(`project:${project.id}`, project);
+  pipeline.sadd(`user:${data.userId}:projects`, project.id);
+  await pipeline.exec();
+
   return project;
 }
 
-export function updateProject(id: string, data: Partial<Project>): Project | null {
-  const db = readDb();
-  const idx = db.projects.findIndex((p) => p.id === id);
-  if (idx === -1) return null;
-  db.projects[idx] = { ...db.projects[idx], ...data, updatedAt: new Date().toISOString() };
-  writeDb(db);
-  return db.projects[idx];
+export async function updateProject(id: string, data: Partial<Project>): Promise<Project | null> {
+  const project = await redis.get<Project>(`project:${id}`);
+  if (!project) return null;
+
+  const updated = { ...project, ...data, updatedAt: new Date().toISOString() };
+  await redis.set(`project:${id}`, updated);
+  return updated;
 }
 
-export function deleteProject(id: string): boolean {
-  const db = readDb();
-  const idx = db.projects.findIndex((p) => p.id === id);
-  if (idx === -1) return false;
-  db.projects.splice(idx, 1);
-  db.subdomains = db.subdomains.filter((s) => s.projectId !== id);
-  writeDb(db);
+export async function deleteProject(id: string): Promise<boolean> {
+  const project = await redis.get<Project>(`project:${id}`);
+  if (!project) return false;
+
+  const pipeline = redis.pipeline();
+  pipeline.del(`project:${id}`);
+  pipeline.srem(`user:${project.userId}:projects`, id);
+  // Remove subdomain if exists
+  const subdomain = await findSubdomainByProject(id);
+  if (subdomain) {
+    pipeline.del(`subdomain:${subdomain.slug}`);
+    pipeline.del(`subdomain:project:${id}`);
+    pipeline.del(`subdomain:user:${subdomain.userId}`);
+  }
+  await pipeline.exec();
   return true;
 }
 
 // Subdomains
-export function findSubdomainBySlug(slug: string): Subdomain | undefined {
-  const db = readDb();
-  return db.subdomains.find((s) => s.slug === slug);
+export async function findSubdomainBySlug(slug: string): Promise<Subdomain | null> {
+  return redis.get<Subdomain>(`subdomain:${slug}`);
 }
 
-export function findSubdomainByUser(userId: string): Subdomain | undefined {
-  const db = readDb();
-  return db.subdomains.find((s) => s.userId === userId);
+export async function findSubdomainByProject(projectId: string): Promise<Subdomain | null> {
+  const subdomainId = await redis.get<string>(`subdomain:project:${projectId}`);
+  if (!subdomainId) return null;
+  return redis.get<Subdomain>(`subdomain:${subdomainId}`);
 }
 
-export function createSubdomain(data: { slug: string; projectId: string; userId: string }): Subdomain {
-  const db = readDb();
+export async function findSubdomainByUser(userId: string): Promise<Subdomain | null> {
+  const subdomainId = await redis.get<string>(`subdomain:user:${userId}`);
+  if (!subdomainId) return null;
+  return redis.get<Subdomain>(`subdomain:${subdomainId}`);
+}
+
+export async function createSubdomain(data: { slug: string; projectId: string; userId: string }): Promise<Subdomain> {
   const subdomain: Subdomain = {
     id: uuidv4(),
     slug: data.slug,
     projectId: data.projectId,
     userId: data.userId,
   };
-  db.subdomains.push(subdomain);
-  writeDb(db);
+
+  const pipeline = redis.pipeline();
+  pipeline.set(`subdomain:${subdomain.slug}`, subdomain);
+  pipeline.set(`subdomain:project:${data.projectId}`, subdomain.id);
+  pipeline.set(`subdomain:user:${data.userId}`, subdomain.id);
+  await pipeline.exec();
+
   return subdomain;
 }

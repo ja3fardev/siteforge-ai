@@ -10,7 +10,7 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const user = findUserById((session.user as any).id);
+    const user = await findUserById((session.user as any).id);
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
@@ -31,7 +31,7 @@ export async function PUT(req: NextRequest) {
     }
 
     const { name, bio, avatar } = await req.json();
-    const user = updateUser((session.user as any).id, { name, bio, avatar });
+    const user = await updateUser((session.user as any).id, { name, bio, avatar });
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
